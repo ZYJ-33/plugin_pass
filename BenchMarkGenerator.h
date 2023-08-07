@@ -8,6 +8,8 @@
 #include "llvm/IR/PassManager.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/IntrinsicsNVPTX.h"
+
 
 namespace llvm {
     class BenchMarkGenerator : public PassInfoMixin<BenchMarkGenerator> {
