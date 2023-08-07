@@ -6,10 +6,8 @@
 #include<set>
 #include<sstream>
 #include<fstream>
-#include<filesystem>
-
-namespace fs = std::filesystem;
-
+#include<sys/stat.h>
+#include<sys/types.h>
 
 using namespace llvm;
 
@@ -162,17 +160,27 @@ uint32_t get_upper_bound_of(MDNode* node)
     }
 }
 
+bool dir_exist(const std::string& path)
+{
+    struct stat info;
+    return stat(path.c_str(), &info) == 0 && S_ISDIR(info.st_mode);
+}
+
+void create_dir(const std::string& path)
+{
+    if(mkdir(path.c_str(), 0777) != 0)
+    {
+        errs()<<"can't not create benchmark directory\n";
+        exit(1);
+    }
+}
+
 void write_to_benchmark_file(Function& f, const std::string& code)
 {
     std::string dir_path = "./benchmarks";
-    if(!fs::is_directory(dir_path))
-    {
-        if(!fs::create_directory(dir_path))
-        {
-            errs()<<"can't not create benchmark directory\n";
-            exit(1);
-        }
-    }
+    if(!dir_exist(dir_path))
+        create_dir(dir_path);
+
     std::stringstream benchmark_name;
     benchmark_name<<dir_path<<"/";
     benchmark_name << f.getName().str()<< "_benchmark.cpp";
