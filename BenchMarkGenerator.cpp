@@ -6,6 +6,10 @@
 #include<set>
 #include<sstream>
 #include<fstream>
+#include<filesystem>
+
+namespace fs = std::filesystem;
+
 
 using namespace llvm;
 
@@ -160,8 +164,18 @@ uint32_t get_upper_bound_of(MDNode* node)
 
 void write_to_benchmark_file(Function& f, const std::string& code)
 {
+    std::string dir_path = "./benchmarks";
+    if(!fs::is_directory(dir_path))
+    {
+        if(!fs::create_directory(dir_path))
+        {
+            errs()<<"can't not create benchmark directory\n";
+            exit(1);
+        }
+    }
     std::stringstream benchmark_name;
-    benchmark_name << f.getName().str()<< "_benchmark.c";
+    benchmark_name<<dir_path<<"/";
+    benchmark_name << f.getName().str()<< "_benchmark.cpp";
     outs()<<benchmark_name.str()<<"\n";
     std::ofstream of;
     of.open(benchmark_name.str(), std::ios::out);
