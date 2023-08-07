@@ -9,7 +9,6 @@
 
 using namespace llvm;
 
-
 namespace{
     std::string part1 = "#include<cuda.h>\n"
                         "#include<iostream>\n"
@@ -129,13 +128,14 @@ void get_Intrinsics(Function &f, std::vector<CallInst*>& intrinsic_call)
         {
             if(call_inst->getCalledFunction()->isIntrinsic())
             {
-                StringRef intrin_name = Intrinsic::getName(call_inst->getCalledFunction()->getIntrinsicID());
-                if(intrin_name == "llvm.nvvm.read.ptx.sreg.ctaid.x"
-                || intrin_name == "llvm.nvvm.read.ptx.sreg.ctaid.y"
-                || intrin_name == "llvm.nvvm.read.ptx.sreg.ctaid.z"
-                || intrin_name == "llvm.nvvm.read.ptx.sreg.tid.x"
-                || intrin_name == "llvm.nvvm.read.ptx.sreg.tid.y"
-                || intrin_name == "llvm.nvvm.read.ptx.sreg.tid.z")
+                Intrinsic::ID id = call_inst->getCalledFunction()->getIntrinsicID();
+
+                if(id == Intrinsic::nvvm_read_ptx_sreg_tid_x
+                || id == Intrinsic::nvvm_read_ptx_sreg_tid_y
+                || id == Intrinsic::nvvm_read_ptx_sreg_tid_z
+                || id == Intrinsic::nvvm_read_ptx_sreg_ctaid_x
+                || id == Intrinsic::nvvm_read_ptx_sreg_ctaid_y
+                || id == Intrinsic::nvvm_read_ptx_sreg_ctaid_z)
                     intrinsic_call.push_back(call_inst);
             }
         }
@@ -188,39 +188,36 @@ PreservedAnalyses BenchMarkGenerator::run(llvm::Function &f, llvm::FunctionAnaly
         if(seen.find(intrin->getIntrinsicID()) == seen.end())
             seen.insert(intrin->getIntrinsicID());
         else
-            continue;
-        StringRef intrin_name = intrin->getCalledFunction()->getName();
+        {
+            errs()<<"multiple intrin found\n";
+            exit(1);
+        }
+
+        Intrinsic::ID id = intrin->getCalledFunction()->getIntrinsicID();
         MDNode* range = intrin->getMetadata("range");
         uint32_t upper_bound = get_upper_bound_of(range);
-        if(intrin_name == "llvm.nvvm.read.ptx.sreg.ctaid.x")
-            block_x = upper_bound;
-        else if(intrin_name == "llvm.nvvm.read.ptx.sreg.ctaid.y")
-            block_y = upper_bound;
-        else if(intrin_name == "llvm.nvvm.read.ptx.sreg.ctaid.z")
-            block_z = upper_bound;
-        else if (intrin_name == "llvm.nvvm.read.ptx.sreg.tid.x")
-            thread_x = upper_bound;
-        else if(intrin_name == "llvm.nvvm.read.ptx.sreg.tid.y")
-            thread_y = upper_bound;
-        else if(intrin_name == "llvm.nvvm.read.ptx.sreg.tid.z")
-            thread_z = upper_bound;
+
+        switch (id) {
+            case Intrinsic::nvvm_read_ptx_sreg_tid_x:
+                thread_x = upper_bound;
+                break;
+            case Intrinsic::nvvm_read_ptx_sreg_tid_y:
+                thread_y = upper_bound;
+                break;
+            case Intrinsic::nvvm_read_ptx_sreg_tid_z:
+                thread_z = upper_bound;
+                break;
+            case Intrinsic::nvvm_read_ptx_sreg_ctaid_x:
+                block_x = upper_bound;
+                break;
+            case Intrinsic::nvvm_read_ptx_sreg_ctaid_y:
+                block_x = upper_bound;
+                break;
+            case Intrinsic::nvvm_read_ptx_sreg_ctaid_z:
+                block_x = upper_bound;
+                break;
+        }
     }
-
-    /*
-    outs() << f.getName() << "(";
-    for(auto byte : bytes)
-        outs() << " " << byte <<" ";
-    outs() <<")\n";
-
-    outs() <<"block_x: " << block_x <<"\n";
-    outs() <<"block_y: " << block_y <<"\n";
-    outs() <<"block_z: " << block_z <<"\n";
-
-    outs() <<"thread_x: " << thread_x <<"\n";
-    outs() <<"thread_y: " << thread_y <<"\n";;
-    outs() <<"thread_z: " << thread_z <<"\n";;
-    */
-
     std::string module_name = get_module_name(f.getParent()->getName());
     std::string code = code_gen(f, module_name, bytes, 0, block_x, block_y, block_z, thread_x, thread_y, thread_z);
     write_to_benchmark_file(f, code);

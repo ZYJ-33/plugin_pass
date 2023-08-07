@@ -14,7 +14,7 @@ list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
 include(AddLLVM)
 
 set(_SOURCE_FILES
-        BenchmarkGenerator.cpp)
+        BenchMarkGenerator.cpp)
 
 add_llvm_pass_plugin(BenchmarkGenerator
         ${_SOURCE_FILES}
