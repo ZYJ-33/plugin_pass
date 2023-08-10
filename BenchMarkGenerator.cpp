@@ -4,6 +4,7 @@
 #include "BenchMarkGenerator.h"
 #include<vector>
 #include<set>
+#include<map>
 #include<sstream>
 #include<fstream>
 #include<sys/stat.h>
@@ -13,9 +14,11 @@ using namespace llvm;
 
 namespace{
     std::string part1 = "#include<cuda.h>\n"
+                        "#include<cuda_runtime.h>\n"
                         "#include<iostream>\n"
                         "#include<time.h>\n"
                         "#include<stdio.h>\n"
+                        "#include<bits/stdc++.h>\n"
                         "\n"
                         "static void check(CUresult result, char const *const func,\n"
                         "                  const char *const file, int const line) {\n"
@@ -35,18 +38,26 @@ namespace{
                         "    CUmodule module;\n"
                         "    CUcontext ctx;\n"
                         "\n"
-                        "    double begin, end;\n"
+                        "    cudaEvent_t begin, end;\n"
+                        "    cudaEventCreate(&begin);\n"
+                        "    cudaEventCreate(&end);\n"
                         "\n"
                         "    checkCudaDrvErrors(cuInit(0));\n"
                         "\n"
                         "    checkCudaDrvErrors(cuDeviceGet(&device, 0));\n"
                         "    checkCudaDrvErrors(cuCtxCreate(&ctx, 0, device));\n";
 
-    std::string part2 = "    begin = clock();\n"
+
+
+    std::string part2 = "    cudaEventRecord(begin);\n"
                         "    cuLaunchKernel(func, grid_x, grid_y, grid_z, thread_x, thread_y, thread_z, share_memory_byte,stream, paras, extra);\n"
-                        "    end = clock();\n"
+                        "    cudaEventRecord(end);\n"
+                        "    cudaEventSynchronize(end);\n"
+                        "    float time;\n"
+                        "    cudaEventElapsedTime(&time, begin, end);"
+
                         "\n"
-                        "    std::cout << end - begin << std::endl;\n"
+                        "    std::cout << time << std::endl;\n"
                         "}";
 
 
@@ -67,7 +78,7 @@ namespace{
         return p.substr(i, p.size()-i-3);
     }
 
-    std::string code_gen(Function& f, const std::string& module_name, std::vector<uint64_t>& parameter_bytes, uint32_t share_memory_byte,
+    std::string code_gen(Function& f, const std::string& module_name, std::vector<uint64_t>& parameter_bytes, uint64_t share_memory_byte,
                   uint32_t grid_x, uint32_t grid_y, uint32_t grid_z,
                   uint32_t thread_x, uint32_t thread_y, uint32_t thread_z)
     {
@@ -191,7 +202,101 @@ void write_to_benchmark_file(Function& f, const std::string& code)
     of.close();
 }
 
+bool is_load_or_store(const User* inst)
+{
+    const Instruction* load_or_store = dyn_cast<Instruction>(inst);
+    if(load_or_store)
+        return load_or_store->getOpcode() == Instruction::Load || load_or_store->getOpcode() == Instruction::Store;
+    return false;
+}
+
+const Instruction* to_inst(const User* user)
+{
+    if(!user)
+        return nullptr;
+
+    const Instruction* inst = dyn_cast<Instruction>(user);
+    if(inst)
+        return inst;
+    const Operator* op = dyn_cast<Operator>(user);
+    if(!op)
+        return nullptr;
+
+    auto adsc = dyn_cast<ConcreteOperator<Operator, Instruction::AddrSpaceCast>>(op);
+    auto gep = dyn_cast<ConcreteOperator<Operator, Instruction::GetElementPtr>>(op);
+    if(!gep && !adsc)
+        return nullptr;
+
+    if(gep)
+    {
+        for(auto u : gep->users())
+        {
+            auto res = to_inst(u);
+            if(res)
+                return res;
+        }
+        return nullptr;
+    }
+    else
+    {
+        for(auto u : adsc->users())
+        {
+            auto res = to_inst(u);
+            if(res)
+                return res;
+        }
+        return nullptr;
+    }
+}
+
+static bool sharemem_calculate_before = false;
+static std::map<std::string, uint64_t> func_sharedmemory;
+
+
+void get_function_sharememory_usage(const Module* mod)
+{
+    for(auto iter = mod->global_begin(); iter != mod->global_end(); iter++)
+    {
+        const GlobalVariable* var = dyn_cast<GlobalVariable>(dyn_cast<GlobalObject>(iter));
+        bool can_be_null;
+        bool can_be_free;
+        auto size = var->getPointerDereferenceableBytes(mod->getDataLayout(),  can_be_null, can_be_free);
+
+        std::set<std::string> func_record;
+        if(var->getAddressSpace() == 3)
+        {
+            for(auto user_iter: var->users())
+            {
+                auto inst_ptr = to_inst(user_iter);
+                if(!inst_ptr)
+                {
+                    errs()<<"in get_function_sharememory_usage\n"<<*user_iter<<"\n";
+                    exit(1);
+                }
+                std::string func_name = inst_ptr->getParent()->getParent()->getName().str();
+                if(func_record.find(func_name) != func_record.end())
+                    continue;
+                func_record.insert(func_name);
+
+                if(func_sharedmemory.find(func_name) == func_sharedmemory.end())
+                    func_sharedmemory[func_name] = size;
+                else
+                    func_sharedmemory[func_name] += size;
+            }
+        }
+    }
+}
+
 PreservedAnalyses BenchMarkGenerator::run(llvm::Function &f, llvm::FunctionAnalysisManager &fam) {
+
+    if(!sharemem_calculate_before)
+    {
+        sharemem_calculate_before = true;
+        get_function_sharememory_usage(f.getParent());
+    }
+
+    uint64_t share_memory_byte = func_sharedmemory[f.getName().str()];
+
     std::vector<uint64_t> bytes;
     std::vector<CallInst*> intrinsics;
     byte_of_parameters(f, bytes);
@@ -241,8 +346,9 @@ PreservedAnalyses BenchMarkGenerator::run(llvm::Function &f, llvm::FunctionAnaly
         }
     }
     std::string module_name = get_module_name(f.getParent()->getName());
-    std::string code = code_gen(f, module_name, bytes, 0, block_x, block_y, block_z, thread_x, thread_y, thread_z);
+    std::string code = code_gen(f, module_name, bytes, share_memory_byte, block_x, block_y, block_z, thread_x, thread_y, thread_z);
     write_to_benchmark_file(f, code);
+
     return PreservedAnalyses::all();
 }
 

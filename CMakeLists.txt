@@ -16,6 +16,7 @@ include(AddLLVM)
 set(_SOURCE_FILES
         BenchMarkGenerator.cpp)
 
+
 add_llvm_pass_plugin(BenchmarkGenerator
         ${_SOURCE_FILES}
         LINK_COMPONENTS
